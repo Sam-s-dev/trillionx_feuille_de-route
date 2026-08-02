@@ -298,6 +298,71 @@
 
   .loading { padding: 100px 0; text-align: center; color: var(--muted-2); font-family: var(--font-mono); font-size: 14px; }
   .loading i { font-size: 32px; color: var(--purple-primary); margin-bottom: 16px; }
+
+  /* ---------- Responsive Mobile Design ---------- */
+  @media(max-width: 900px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .fin-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media(max-width: 768px) {
+    #app { padding: 24px 12px 70px; }
+    .river-track {
+      overflow-x: auto;
+      padding-bottom: 16px;
+      justify-content: flex-start;
+      gap: 24px;
+    }
+    .river-node {
+      width: 100px;
+      flex-shrink: 0;
+    }
+    .river-line, .river-line-fill {
+      display: none;
+    }
+    .task-actions {
+      opacity: 1;
+    }
+    .footer-bar {
+      flex-direction: column;
+      gap: 16px;
+      align-items: center;
+      text-align: center;
+    }
+  }
+
+  @media(max-width: 600px) {
+    .hero { margin-bottom: 24px; }
+    h1.title { font-size: 26px; }
+    .subtitle { font-size: 14.5px; }
+    .team-row { gap: 6px; }
+    .chip { font-size: 12px; padding: 6px 12px; }
+    
+    .phase-head { padding: 14px 20px; }
+    .phase-title { font-size: 16px; }
+    .phase-range { font-size: 11px; }
+    .phase-progress-bar { display: none; }
+    .phase-body { padding: 10px 14px 18px; }
+    
+    .add-row { flex-direction: column; align-items: stretch; gap: 8px; }
+    .add-row input[type=text], .add-row select, .add-btn { width: 100%; min-width: 0; }
+    
+    .task-row { padding: 10px 6px; }
+    .task-text { font-size: 13.5px; }
+    
+    .fin-grid { grid-template-columns: 1fr; gap: 12px; }
+    .fin-card { padding: 16px; }
+    .fin-card .fin-value { font-size: 20px; }
+    
+    .caisse-panel { padding: 16px; margin-bottom: 24px; }
+    .caisse-top .fin-label { font-size: 13px; }
+    .caisse-input-wrap input { width: 100%; max-width: 120px; font-size: 14px; padding: 6px 10px; }
+  }
+
+  /* Support pour les terminaux sans survol tactile */
+  @media (hover: none) {
+    .task-row:hover { transform: none; }
+  }
 </style>
 </head>
 <body>
