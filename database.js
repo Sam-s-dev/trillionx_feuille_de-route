@@ -1,101 +1,69 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'database.sqlite');
-
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Erreur lors de la connexion à SQLite:', err.message);
-  } else {
-    console.log('Connecté à la base de données SQLite:', dbPath);
-  }
+// Connexion PostgreSQL via DATABASE_URL (fourni par Neon.tech ou Render)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
-// Helper pour exécuter des requêtes SQL (Promise)
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) {
-        console.error('SQL Error Run:', sql, err);
-        reject(err);
-      } else {
-        resolve(this);
-      }
-    });
-  });
-}
+pool.on('connect', () => {
+  console.log('Connecté à la base de données PostgreSQL');
+});
 
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) {
-        console.error('SQL Error All:', sql, err);
-        reject(err);
-      } else {
-        resolve(rows);
-      }
-    });
-  });
-}
+pool.on('error', (err) => {
+  console.error('Erreur PostgreSQL inattendue:', err.message);
+});
 
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) {
-        console.error('SQL Error Get:', sql, err);
-        reject(err);
-      } else {
-        resolve(row);
-      }
-    });
-  });
-}
+// ========== Initialisation de la base de données ==========
 
-// Initialise la structure de la base de données
 async function initDatabase() {
-  await run(`
-    CREATE TABLE IF NOT EXISTS caisse (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      valeur INTEGER DEFAULT 0
-    )
-  `);
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS caisse (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        valeur BIGINT DEFAULT 0
+      )
+    `);
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS collapsed (
-      phase_id TEXT PRIMARY KEY,
-      is_collapsed INTEGER DEFAULT 0
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS collapsed (
+        phase_id TEXT PRIMARY KEY,
+        is_collapsed INTEGER DEFAULT 0
+      )
+    `);
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      phase_id TEXT,
-      group_label TEXT,
-      text TEXT,
-      difficulty TEXT,
-      done INTEGER DEFAULT 0,
-      position INTEGER
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        phase_id TEXT,
+        group_label TEXT,
+        text TEXT,
+        difficulty TEXT,
+        done INTEGER DEFAULT 0,
+        position INTEGER
+      )
+    `);
 
-  // Vérifier si nous devons insérer les données par défaut (si la table tasks est vide)
-  const taskCountRow = await get('SELECT COUNT(*) AS count FROM tasks');
-  if (taskCountRow && taskCountRow.count === 0) {
-    console.log('Base de données vide. Initialisation avec les données par défaut...');
-    await seedDefaultData();
+    // Vérifier si nous devons insérer les données par défaut
+    const result = await client.query('SELECT COUNT(*) AS count FROM tasks');
+    if (parseInt(result.rows[0].count) === 0) {
+      console.log('Base de données vide. Initialisation avec les données par défaut...');
+      await seedDefaultData(client);
+    }
+  } finally {
+    client.release();
   }
 }
 
-// Données par défaut avec les corrections demandées :
-// - Louceny Dabo confirmé (sans mention "à confirmer")
-// - Partenaire externe renommée en Djenabou Barry
-async function seedDefaultData() {
-  // Caisse par défaut
-  await run('INSERT INTO caisse (id, valeur) VALUES (1, 0) ON CONFLICT(id) DO NOTHING');
+// ========== Données par défaut ==========
 
-  // Tâches par défaut
+async function seedDefaultData(client) {
+  // Caisse par défaut
+  await client.query(
+    'INSERT INTO caisse (id, valeur) VALUES (1, 0) ON CONFLICT (id) DO NOTHING'
+  );
+
   const defaultTasks = [];
   let pos = 1;
 
@@ -142,7 +110,7 @@ async function seedDefaultData() {
   T('p2', 'Objectifs au retour', "Revenir de Fria avec des rendez-vous déjà planifiés", 'moyenne');
   T('p2', 'Objectifs au retour', "Boutique Flow — Djenabou Barry recherche de nouveaux clients, mène les discussions commerciales et prépare les contrats", 'moyenne');
 
-  // Objectifs mensuels récurrents (Sep, Oct, Nov, Dec)
+  // Objectifs mensuels récurrents
   const addMonthlyTasks = (phaseId) => {
     T(phaseId, 'Objectifs minimums du mois', "Signer au minimum 5 nouvelles pharmacies (ORDIVEX) — ≈ 6 000 000 GNF/pharmacie, prix adaptable", 'elevee');
     T(phaseId, 'Objectifs minimums du mois', "Signer au minimum 3 nouvelles boutiques (Boutique Flow) — ≈ 300 000 GNF/mois, prix adaptable", 'moyenne');
@@ -158,180 +126,181 @@ async function seedDefaultData() {
   // Mamou
   T('mamou', 'Préparation du voyage', "Planifier la date précise du voyage à Mamou", 'facile');
   T('mamou', 'Préparation du voyage', "Définir le budget du voyage (à préciser une fois la date proche)", 'facile');
-
   T('mamou', 'Sur le terrain', "Rencontrer les agriculteurs d'oignon à Mamou et comprendre leurs besoins", 'moyenne');
   T('mamou', 'Sur le terrain', "Mettre en place la relation agriculteurs ↔ acheteurs de Conakry (hôtels, restaurants, grossistes, tout type d'acheteur)", 'elevee');
-
   T('mamou', 'Après le voyage', "Rédiger un rapport détaillé du voyage avec tous les éléments (besoins des agriculteurs, mise en place, dépenses)", 'facile');
 
-  // Exécution de l'insertion en série
-  db.serialize(() => {
-    const stmt = db.prepare('INSERT INTO tasks (id, phase_id, group_label, text, difficulty, done, position) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    for (const t of defaultTasks) {
-      stmt.run(t.id, t.phase_id, t.group_label, t.text, t.difficulty, t.done, t.position);
-    }
-    stmt.finalize();
-    console.log('Seeding des tâches par défaut terminé.');
-  });
+  // Insertion en batch
+  for (const t of defaultTasks) {
+    await client.query(
+      'INSERT INTO tasks (id, phase_id, group_label, text, difficulty, done, position) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [t.id, t.phase_id, t.group_label, t.text, t.difficulty, t.done, t.position]
+    );
+  }
+  console.log(`Seeding terminé : ${defaultTasks.length} tâches insérées.`);
 }
 
-// Récupère l'état complet
+// ========== Lecture de l'état complet ==========
+
 async function getState() {
-  const caisseRow = await get('SELECT valeur FROM caisse WHERE id = 1');
-  const caisseActuelle = caisseRow ? caisseRow.valeur : 0;
+  const client = await pool.connect();
+  try {
+    const caisseResult = await client.query('SELECT valeur FROM caisse WHERE id = 1');
+    const caisseActuelle = caisseResult.rows.length > 0 ? parseInt(caisseResult.rows[0].valeur) : 0;
 
-  const collapsedRows = await all('SELECT phase_id, is_collapsed FROM collapsed');
-  const collapsed = {};
-  for (const row of collapsedRows) {
-    collapsed[row.phase_id] = !!row.is_collapsed;
-  }
+    const collapsedResult = await client.query('SELECT phase_id, is_collapsed FROM collapsed');
+    const collapsed = {};
+    for (const row of collapsedResult.rows) {
+      collapsed[row.phase_id] = !!row.is_collapsed;
+    }
 
-  const tasksRows = await all('SELECT * FROM tasks ORDER BY position ASC');
+    const tasksResult = await client.query('SELECT * FROM tasks ORDER BY position ASC');
 
-  // Définition statique des phases (pour structurer la réponse)
-  const phasesTemplates = [
-    { id: 'p1', title: 'Phase 1 — Préparation avant Fria', range: '1 – 15 août 2026', groups: [] },
-    { id: 'p2', title: 'Phase 2 — Mission Fria', range: '15 – 31 août 2026', groups: [] },
-    { id: 'sep', title: 'Septembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
-    { id: 'oct', title: 'Octobre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
-    { id: 'nov', title: 'Novembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
-    { id: 'dec', title: 'Décembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
-    { id: 'mamou', title: 'Agriculteur Connecté — Voyage à Mamou', range: 'Date à définir (entre septembre et décembre 2026)', groups: [] }
-  ];
+    const phasesTemplates = [
+      { id: 'p1', title: 'Phase 1 — Préparation avant Fria', range: '1 – 15 août 2026', groups: [] },
+      { id: 'p2', title: 'Phase 2 — Mission Fria', range: '15 – 31 août 2026', groups: [] },
+      { id: 'sep', title: 'Septembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
+      { id: 'oct', title: 'Octobre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
+      { id: 'nov', title: 'Novembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
+      { id: 'dec', title: 'Décembre 2026', range: 'Objectifs mensuels récurrents (après retour de Fria)', groups: [] },
+      { id: 'mamou', title: 'Agriculteur Connecté — Voyage à Mamou', range: 'Date à définir (entre septembre et décembre 2026)', groups: [] }
+    ];
 
-  // Regrouper les tâches par phase et groupe
-  for (const p of phasesTemplates) {
-    const phaseTasks = tasksRows.filter(t => t.phase_id === p.id);
-    
-    // Identifier les groupes uniques dans l'ordre d'apparition
-    const groupLabels = [];
-    for (const t of phaseTasks) {
-      if (!groupLabels.includes(t.group_label)) {
-        groupLabels.push(t.group_label);
+    for (const p of phasesTemplates) {
+      const phaseTasks = tasksResult.rows.filter(t => t.phase_id === p.id);
+      const groupLabels = [];
+      for (const t of phaseTasks) {
+        if (!groupLabels.includes(t.group_label)) {
+          groupLabels.push(t.group_label);
+        }
+      }
+      for (const label of groupLabels) {
+        const tasks = phaseTasks
+          .filter(t => t.group_label === label)
+          .map(t => ({
+            id: t.id,
+            text: t.text,
+            difficulty: t.difficulty,
+            done: !!t.done
+          }));
+        p.groups.push({ label, tasks });
       }
     }
 
-    for (const label of groupLabels) {
-      const tasks = phaseTasks
-        .filter(t => t.group_label === label)
-        .map(t => ({
-          id: t.id,
-          text: t.text,
-          difficulty: t.difficulty,
-          done: !!t.done
-        }));
-
-      p.groups.push({
-        label: label,
-        tasks: tasks
-      });
-    }
+    return { caisseActuelle, collapsed, phases: phasesTemplates };
+  } finally {
+    client.release();
   }
-
-  return {
-    caisseActuelle,
-    collapsed,
-    phases: phasesTemplates
-  };
 }
 
-// Sauvegarde l'état complet
-function saveState(state) {
-  return new Promise((resolve, reject) => {
-    db.serialize(async () => {
-      try {
-        await run('BEGIN TRANSACTION');
+// ========== Sauvegarde de l'état complet ==========
 
-        // 1. Caisse
-        await run('INSERT INTO caisse (id, valeur) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET valeur = excluded.valeur', [state.caisseActuelle || 0]);
+async function saveState(state) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-        // 2. Collapsed
-        await run('DELETE FROM collapsed');
-        if (state.collapsed) {
-          const stmtCollapsed = db.prepare('INSERT INTO collapsed (phase_id, is_collapsed) VALUES (?, ?)');
-          for (const [phaseId, isCol] of Object.entries(state.collapsed)) {
-            stmtCollapsed.run(phaseId, isCol ? 1 : 0);
-          }
-          stmtCollapsed.finalize();
-        }
+    // 1. Caisse
+    await client.query(
+      'INSERT INTO caisse (id, valeur) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET valeur = EXCLUDED.valeur',
+      [state.caisseActuelle || 0]
+    );
 
-        // 3. Tasks
-        await run('DELETE FROM tasks');
-        if (state.phases) {
-          const stmtTask = db.prepare('INSERT INTO tasks (id, phase_id, group_label, text, difficulty, done, position) VALUES (?, ?, ?, ?, ?, ?, ?)');
-          let pos = 1;
-          for (const phase of state.phases) {
-            if (!phase.groups) continue;
-            for (const group of phase.groups) {
-              if (!group.tasks) continue;
-              for (const task of group.tasks) {
-                stmtTask.run(
-                  task.id,
-                  phase.id,
-                  group.label,
-                  task.text,
-                  task.difficulty,
-                  task.done ? 1 : 0,
-                  pos++
-                );
-              }
-            }
-          }
-          stmtTask.finalize();
-        }
-
-        await run('COMMIT');
-        resolve({ success: true });
-      } catch (err) {
-        db.run('ROLLBACK');
-        console.error('Erreur lors de la transaction de sauvegarde state:', err);
-        reject(err);
+    // 2. Collapsed
+    await client.query('DELETE FROM collapsed');
+    if (state.collapsed) {
+      for (const [phaseId, isCol] of Object.entries(state.collapsed)) {
+        await client.query(
+          'INSERT INTO collapsed (phase_id, is_collapsed) VALUES ($1, $2)',
+          [phaseId, isCol ? 1 : 0]
+        );
       }
-    });
-  });
+    }
+
+    // 3. Tasks
+    await client.query('DELETE FROM tasks');
+    if (state.phases) {
+      let pos = 1;
+      for (const phase of state.phases) {
+        if (!phase.groups) continue;
+        for (const group of phase.groups) {
+          if (!group.tasks) continue;
+          for (const task of group.tasks) {
+            await client.query(
+              'INSERT INTO tasks (id, phase_id, group_label, text, difficulty, done, position) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+              [task.id, phase.id, group.label, task.text, task.difficulty, task.done ? 1 : 0, pos++]
+            );
+          }
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    return { success: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erreur de sauvegarde PostgreSQL:', err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-// Fonction de réinitialisation complète aux valeurs par défaut
+// ========== Réinitialisation ==========
+
 async function resetToDefault() {
-  await run('DELETE FROM tasks');
-  await run('DELETE FROM collapsed');
-  await run('DELETE FROM caisse');
-  await seedDefaultData();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM tasks');
+    await client.query('DELETE FROM collapsed');
+    await client.query('DELETE FROM caisse');
+    await seedDefaultData(client);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   return await getState();
 }
 
+// ========== Statistiques d'agrégation SQL ==========
+
 async function getStats() {
-  const globalRow = await get(`
-    SELECT 
-      COUNT(*) as total, 
-      SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) as completed 
-    FROM tasks
-  `);
-  
-  const difficultyRows = await all(`
-    SELECT difficulty, COUNT(*) as count 
-    FROM tasks 
-    GROUP BY difficulty
-  `);
-  
-  const phaseRows = await all(`
-    SELECT phase_id, COUNT(*) as total, SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) as completed 
-    FROM tasks 
-    GROUP BY phase_id
-  `);
-  
-  const caisseRow = await get('SELECT valeur FROM caisse WHERE id = 1');
-  const caisseActuelle = caisseRow ? caisseRow.valeur : 0;
-  
-  return {
-    global: {
-      total: globalRow ? globalRow.total : 0,
-      completed: globalRow && globalRow.completed ? globalRow.completed : 0
-    },
-    difficulty: difficultyRows,
-    phases: phaseRows,
-    caisse: caisseActuelle
-  };
+  const client = await pool.connect();
+  try {
+    const globalResult = await client.query(`
+      SELECT COUNT(*) AS total, SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) AS completed FROM tasks
+    `);
+    const global = {
+      total: parseInt(globalResult.rows[0].total) || 0,
+      completed: parseInt(globalResult.rows[0].completed) || 0
+    };
+
+    const diffResult = await client.query(`
+      SELECT difficulty, COUNT(*) AS count FROM tasks GROUP BY difficulty
+    `);
+    const difficulty = diffResult.rows.map(r => ({ difficulty: r.difficulty, count: parseInt(r.count) }));
+
+    const phaseResult = await client.query(`
+      SELECT phase_id, COUNT(*) AS total, SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) AS completed
+      FROM tasks GROUP BY phase_id
+    `);
+    const phases = phaseResult.rows.map(r => ({
+      phase_id: r.phase_id,
+      total: parseInt(r.total),
+      completed: parseInt(r.completed) || 0
+    }));
+
+    const caisseResult = await client.query('SELECT valeur FROM caisse WHERE id = 1');
+    const caisse = caisseResult.rows.length > 0 ? parseInt(caisseResult.rows[0].valeur) : 0;
+
+    return { global, difficulty, phases, caisse };
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = {
@@ -341,4 +310,3 @@ module.exports = {
   resetToDefault,
   getStats
 };
-
