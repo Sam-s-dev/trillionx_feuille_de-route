@@ -33,7 +33,6 @@ npm start
 Le serveur démarrera par défaut sur le port **2027** :
 Accès dans le navigateur : [http://localhost:2027](http://localhost:2027)
 
-
 La base de données SQLite sera automatiquement créée sous le nom de `database.sqlite` à la racine du projet.
 
 ---
